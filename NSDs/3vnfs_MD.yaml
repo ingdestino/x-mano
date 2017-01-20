@@ -1,0 +1,351 @@
+# Copyright 2017 Giovanni Baggio Create Net / FBK (http://create-net.fbk.eu/)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied. See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+tosca_FDs_protocol_version: 1.0
+description: Multi-domain video streaming and trancoding.
+name: lifecycle
+
+MD_NS:
+  vnfds:
+    - name: videosource
+      type: tosca.nodes.nfv.VNF
+      location: domain1
+      vnf_reference: videostreamer
+      vnf_params:
+        public_ip: random
+        vm_size: m1.medium
+
+    - name: videoconverter
+      type: tosca.nodes.nfv.VNF
+      location: domain2
+      vnf_reference: videotranscoder
+      vnf_params:
+        public_ip: random
+        vm_size: m1.medium
+
+    - name: videoconverter2
+      type: tosca.nodes.nfv.VNF
+      location: domain2
+      vnf_reference: videotranscoder
+      vnf_params:
+        public_ip: random
+        vm_size: m1.medium
+
+    - name: domain1_bridge
+      type: tosca.nodes.nfv.VNF
+      location: domain1
+
+    - name: domain2_bridge
+      type: tosca.nodes.nfv.VNF
+      location: domain2
+
+  VLs:
+    - name: dom1_gre_net
+      type: tosca.nodes.nfv.VL.GRE
+    - name: dom2_gre_net
+      type: tosca.nodes.nfv.VL.GRE
+    - name: dom2_gre_net_2
+      type: tosca.nodes.nfv.VL.GRE
+
+  CPs:
+    - name: videosource_gre_cp
+      type: tosca.nodes.nfv.GRE_CP
+      virtualbinding: videosource
+      virtualLink: dom1_gre_net
+    - name: videosource_default_cp
+      type: tosca.nodes.nfv.CP
+      virtualbinding: videosource
+      virtualLink:
+    - name: videoconverter_default_cp
+      type: tosca.nodes.nfv.CP
+      virtualbinding: videoconverter
+      virtualLink:
+    - name: videoconverter_gre_cp
+      type: tosca.nodes.nfv.GRE_CP
+      virtualbinding: videoconverter
+      virtualLink: dom2_gre_net
+    - name: videoconverter_2_default_cp
+      type: tosca.nodes.nfv.CP
+      virtualbinding: videoconverter2
+      virtualLink:
+    - name: videoconverter_2_gre_cp
+      type: tosca.nodes.nfv.GRE_CP
+      virtualbinding: videoconverter2
+      virtualLink: dom2_gre_net_2
+    - name: domain_1_gw_cp
+      type: tosca.nodes.nfv.CP
+      virtualbinding: domain1_bridge
+      virtualLink: dom1_gre_net
+    - name: domain_2_gw_cp
+      type: tosca.nodes.nfv.CP
+      virtualbinding: domain2_bridge
+      virtualLink: dom2_gre_net
+    - name: domain_2_gw_cp_2
+      type: tosca.nodes.nfv.CP
+      virtualbinding: domain2_bridge
+      virtualLink: dom2_gre_net_2
+
+  FPs:
+    - name: source_transcoder
+      type: tosca.nodes.nfv.FP
+      path:
+        - videosource_gre_cp
+        - videosource_default_cp
+        - domain_1_gw_cp
+        - domain_2_gw_cp
+        - videoconverter_default_cp
+        - videoconverter_gre_cp
+    - name: transcoder_source
+      type: tosca.nodes.nfv.FP
+      path:
+        - videoconverter_gre_cp
+        - videoconverter_default_cp
+        - domain_2_gw_cp
+        - domain_1_gw_cp
+        - videosource_default_cp
+        - videosource_gre_cp
+
+  FGs:
+    - name: from_source_to_transcoder
+      type: tosca.nodes.nfv.FG
+      forwardingPaths:
+        - source_transcoder
+        - transcoder_source
+
+# not necessary, but with an elaboration step it is possible to initialize variables
+  Triggers:
+    - name: on nsr launch
+      type: triggers.trigger
+      condition:
+        and:
+          - name: assert these steps to be run only in the beginning
+            type: tosca.generic_evaluation
+            left_item:
+              type: tosca.vartype.bool
+              value: ^nsr_launched
+            right_item:
+              type: tosca.vartype.null
+            operator: '=='
+          - name: check whether nsr on domain1 is ready
+            type: tosca.generic_evaluation
+            left_item:
+              type: tosca.vartype.bool
+              value: ^domain1_OB_nsr_ready
+            right_item:
+              type: tosca.vartype.bool
+              value: True
+            operator: '=='
+          - name: check whether nsr on domain2 is ready
+            type: tosca.generic_evaluation
+            left_item:
+              type: tosca.vartype.bool
+              value: ^domain2_OB_nsr_ready
+            right_item:
+              type: tosca.vartype.bool
+              value: True
+            operator: '=='
+      steps:
+        - name: set nsr_launched variable to True
+          type: steps.elaboration_step
+          elaborations:
+            - type: steps.elaboration_step.evaluation
+              code: "True"
+              store_in: nsr_launched
+        - name: get classes from domains
+          type: steps.vnf_action_step
+          involved_vnfs:
+            - name: domain1_bridge
+              type: tosca.nodes.steps.involved_vnf
+              actions:
+                - name: get_classes
+                  type: tosca.nodes.steps.action
+                  params:
+                    - name: bridge_name
+                      value: domain1_bridge
+                  return_value: domain1_classes
+            - name: domain2_bridge
+              type: tosca.nodes.steps.involved_vnf
+              actions:
+                - name: get_classes
+                  type: tosca.nodes.steps.action
+                  params:
+                    - name: bridge_name
+                      value: domain2_bridge
+                  return_value: domain2_classes
+        - name: select class
+          type: steps.elaboration_step
+          elaborations:
+            - type: steps.elaboration_step.evaluation
+              code: "min(list(set([domain1_classes]).intersection([domain2_classes])))"
+              store_in: domains_class
+        - name: setup domains bridge
+          type: steps.vnf_action_step
+          involved_vnfs:
+            - name: domain1_bridge
+              type: tosca.nodes.steps.involved_vnf
+              actions:
+                - name: set_class
+                  type: tosca.nodes.steps.action
+                  params:
+                    - name: net_class
+                      value: ^domains_class
+                - name: start_monitoring
+                  type: tosca.nodes.steps.action
+                  params:
+            - name: domain2_bridge
+              type: tosca.nodes.steps.involved_vnf
+              actions:
+                - name: set_class
+                  type: tosca.nodes.steps.action
+                  params:
+                    - name: net_class
+                      value: ^domains_class
+                - name: start_monitoring
+                  type: tosca.nodes.steps.action
+                  params:
+        - name: turn nsr on domains to initialized state
+          type: steps.vnf_action_step
+          involved_vnfs:
+            - name: domain1_bridge
+              type: tosca.nodes.steps.involved_vnf
+              actions:
+                - name: status_initialized
+                  type: tosca.nodes.steps.action
+            - name: domain2_bridge
+              type: tosca.nodes.steps.involved_vnf
+              actions:
+                - name: status_initialized
+                  type: tosca.nodes.steps.action
+
+
+
+
+    - name: on domains initialized
+      type: triggers.trigger
+      condition:
+        and:
+          - name: domain1 initialized
+            type: tosca.generic_evaluation
+            left_item:
+              type: tosca.vartype.string
+              value: ^DOMAIN1_STATUS
+            right_item:
+              type: tosca.vartype.string
+              value: initialized
+            operator: '=='
+          - name: domain2 initialized
+            type: tosca.generic_evaluation
+            left_item:
+              type: tosca.vartype.string
+              value: ^DOMAIN2_STATUS
+            right_item:
+              type: tosca.vartype.string
+              value: initialized
+            operator: '=='
+      steps:
+        - name: turn nsr initialized
+          type: steps.elaboration_step
+          elaborations:
+            - type: steps.elaboration_step.FMfunction
+              name: CHANGE_STATUS
+              params:
+                - name: status
+                  value: initialized
+        - name: get source ready
+          type: steps.vnf_action_step
+          involved_vnfs:
+            - name: videosource
+              type: tosca.nodes.steps.involved_vnf
+              actions:
+                - name: get_ip
+                  type: tosca.nodes.steps.action
+                  params:
+                    - name: ifname
+                      value: dom1_gre
+                  return_value: ip
+                - name: start_streaming
+                  type: tosca.nodes.steps.action
+                  params:
+                    - name: videofile
+                      value: BigBuckBunny_320x180.mp4
+                    - name: port
+                      value: 8080
+                    - name: mux
+                      value: ts
+        - name: start the transcoder
+          type: steps.vnf_action_step
+          involved_vnfs:
+            - name: videoconverter
+              type: tosca.nodes.steps.involved_vnf
+              actions:
+                - name: start_transcoding
+                  type: tosca.nodes.steps.action
+                  params:
+                    - name: source_ip
+                      value: ^ip
+                    - name: source_port
+                      value: 8080
+                    - name: mux
+                      value: ts
+                    - name: codec
+                      value: h264
+                    - name: filter
+                      value: sepia
+                    - name: dest_port
+                      value: 8080
+            - name: videoconverter2
+              type: tosca.nodes.steps.involved_vnf
+              actions:
+                - name: start_transcoding
+                  type: tosca.nodes.steps.action
+                  params:
+                    - name: source_ip
+                      value: ^ip
+                    - name: source_port
+                      value: 8080
+                    - name: mux
+                      value: ts
+                    - name: codec
+                      value: h264
+                    - name: filter
+                      value: Gradient
+                    - name: dest_port
+                      value: 8080
+        - name: turn nsr active
+          type: steps.elaboration_step
+          elaborations:
+            - type: steps.elaboration_step.FMfunction
+              name: CHANGE_STATUS
+              params:
+                - name: status
+                  value: active
+
+  monitors:
+    - name: videosource
+      type: monitor.nodes.nfv.VNF
+      measurements:
+        - name: cpu_load
+          type: monitor.measure
+          interval: 10_sec
+
+    - name: videoconverter
+      type: monitor.nodes.nfv.VNF
+      measurements:
+        - name: cpu_load
+          type: monitor.measure
+          interval: 25_sec
+        - name: available_memory
+          type: monitor.measure
+          interval: 20_sec

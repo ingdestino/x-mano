@@ -1,0 +1,233 @@
+# Copyright 2017 Giovanni Baggio Create Net / FBK (http://create-net.fbk.eu/)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied. See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+tosca_FDs_protocol_version: 1.0
+description: Multi-domain video streaming and trancoding.
+name: lifecycle
+
+MD_NS:
+  vnfds:
+    - name: videosource
+      type: tosca.nodes.nfv.VNF
+      location: domain1
+      vnf_reference: videostreamer
+      vnf_params:
+        vm_size: m1.medium
+
+    - name: videoconverter
+      type: tosca.nodes.nfv.VNF
+      location: domain1
+      vnf_reference: videotranscoder
+      vnf_params:
+        public_ip: random
+        vm_size: m1.medium
+
+    - name: videoconverter2
+      type: tosca.nodes.nfv.VNF
+      location: domain1
+      vnf_reference: videotranscoder
+      vnf_params:
+        public_ip: random
+        vm_size: m1.medium
+
+    - name: domain1_bridge
+      type: tosca.nodes.nfv.VNF
+      location: domain1
+
+  VLs:
+
+  CPs:
+    - name: videosource_default_cp
+      type: tosca.nodes.nfv.CP
+      virtualbinding: videosource
+      virtualLink:
+    - name: videoconverter_default_cp
+      type: tosca.nodes.nfv.CP
+      virtualbinding: videoconverter
+      virtualLink:
+    - name: videoconverter_2_default_cp
+      type: tosca.nodes.nfv.CP
+      virtualbinding: videoconverter2
+      virtualLink:
+
+  FPs:
+    - name: source_transcoder
+      type: tosca.nodes.nfv.FP
+      path:
+        - videosource_default_cp
+        - videoconverter_default_cp
+    - name: transcoder_source
+      type: tosca.nodes.nfv.FP
+      path:
+        - videoconverter_default_cp
+        - videosource_default_cp
+
+  FGs:
+    - name: from_source_to_transcoder
+      type: tosca.nodes.nfv.FG
+      forwardingPaths:
+        - source_transcoder
+        - transcoder_source
+
+# not necessary, but with an elaboration step it is possible to initialize variables
+  Triggers:
+    - name: on nsr launch
+      type: triggers.trigger
+      condition:
+        and:
+          - name: assert these steps to be run only in the beginning
+            type: tosca.generic_evaluation
+            left_item:
+              type: tosca.vartype.bool
+              value: ^nsr_launched
+            right_item:
+              type: tosca.vartype.null
+            operator: '=='
+          - name: check whether nsr on domain1 is ready
+            type: tosca.generic_evaluation
+            left_item:
+              type: tosca.vartype.bool
+              value: ^domain1_OB_nsr_ready
+            right_item:
+              type: tosca.vartype.bool
+              value: True
+            operator: '=='
+      steps:
+        - name: set nsr_launched variable to True
+          type: steps.elaboration_step
+          elaborations:
+            - type: steps.elaboration_step.evaluation
+              code: "True"
+              store_in: nsr_launched
+        - name: turn nsr on domains to initialized state
+          type: steps.vnf_action_step
+          involved_vnfs:
+            - name: domain1_bridge
+              type: tosca.nodes.steps.involved_vnf
+              actions:
+                - name: status_initialized
+                  type: tosca.nodes.steps.action
+
+
+
+
+    - name: on domains initialized
+      type: triggers.trigger
+      condition:
+        and:
+          - name: domain1 initialized
+            type: tosca.generic_evaluation
+            left_item:
+              type: tosca.vartype.string
+              value: ^DOMAIN1_STATUS
+            right_item:
+              type: tosca.vartype.string
+              value: initialized
+            operator: '=='
+      steps:
+        - name: turn nsr initialized
+          type: steps.elaboration_step
+          elaborations:
+            - type: steps.elaboration_step.FMfunction
+              name: CHANGE_STATUS
+              params:
+                - name: status
+                  value: initialized
+        - name: get source ready
+          type: steps.vnf_action_step
+          involved_vnfs:
+            - name: videosource
+              type: tosca.nodes.steps.involved_vnf
+              actions:
+                - name: get_ip
+                  type: tosca.nodes.steps.action
+                  params:
+                    - name: ifname
+                      value: eth0
+                  return_value: ip
+                - name: start_streaming
+                  type: tosca.nodes.steps.action
+                  params:
+                    - name: videofile
+                      value: BigBuckBunny_320x180.mp4
+                    - name: port
+                      value: 8080
+                    - name: mux
+                      value: ts
+        - name: start the transcoder
+          type: steps.vnf_action_step
+          involved_vnfs:
+            - name: videoconverter
+              type: tosca.nodes.steps.involved_vnf
+              actions:
+                - name: start_transcoding
+                  type: tosca.nodes.steps.action
+                  params:
+                    - name: source_ip
+                      value: ^ip
+                    - name: source_port
+                      value: 8080
+                    - name: mux
+                      value: ts
+                    - name: codec
+                      value: h264
+                    - name: filter
+                      value: sepia
+                    - name: dest_port
+                      value: 8080
+            - name: videoconverter2
+              type: tosca.nodes.steps.involved_vnf
+              actions:
+                - name: start_transcoding
+                  type: tosca.nodes.steps.action
+                  params:
+                    - name: source_ip
+                      value: ^ip
+                    - name: source_port
+                      value: 8080
+                    - name: mux
+                      value: ts
+                    - name: codec
+                      value: h264
+                    - name: filter
+                      value: Gradient
+                    - name: dest_port
+                      value: 8080
+        - name: turn nsr active
+          type: steps.elaboration_step
+          elaborations:
+            - type: steps.elaboration_step.FMfunction
+              name: CHANGE_STATUS
+              params:
+                - name: status
+                  value: active
+
+  monitors:
+    - name: videosource
+      type: monitor.nodes.nfv.VNF
+      measurements:
+        - name: cpu_load
+          type: monitor.measure
+          interval: 10_sec
+
+    - name: videoconverter
+      type: monitor.nodes.nfv.VNF
+      measurements:
+        - name: cpu_load
+          type: monitor.measure
+          interval: 25_sec
+        - name: available_memory
+          type: monitor.measure
+          interval: 20_sec
