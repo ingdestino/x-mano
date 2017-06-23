@@ -26,6 +26,10 @@ MD_NS:
       vnf_params:
         public_ip: random
         vm_size: m1.medium
+      monitor:
+        - name: cpu_load
+          type: monitor.measure
+          interval: 10_sec
 
     - name: videoconverter
       type: tosca.nodes.nfv.VNF
@@ -34,6 +38,13 @@ MD_NS:
       vnf_params:
         public_ip: random
         vm_size: m1.medium
+      monitor:
+        - name: cpu_load
+          type: monitor.measure
+          interval: 25_sec
+        - name: available_memory
+          type: monitor.measure
+          interval: 20_sec
 
     - name: domain1_bridge
       type: tosca.nodes.nfv.VNF
@@ -141,6 +152,32 @@ MD_NS:
             - type: steps.elaboration_step.evaluation
               code: "True"
               store_in: nsr_launched
+        - name: set nsr other_params from domain1
+          type: steps.elaboration_step
+          elaborations:
+            - type: steps.elaboration_step.FMfunction
+              name: UPDATE_OTHER_PARAMS
+              params:
+                - name: section_name
+                  value: domain1
+                - name: data
+                  value: ^domain1_OB_nsr_ready*
+            - type: steps.elaboration_step.evaluation
+              code: "[^domain1_OB_nsr_ready*]['Federation --> OpenStack instances ips']['videosource']['public']"
+              store_in: source_public_ip
+        - name: set nsr other_params from domain2
+          type: steps.elaboration_step
+          elaborations:
+            - type: steps.elaboration_step.FMfunction
+              name: UPDATE_OTHER_PARAMS
+              params:
+                - name: section_name
+                  value: domain2
+                - name: data
+                  value: ^domain2_OB_nsr_ready*
+            - type: steps.elaboration_step.evaluation
+              code: "[^domain2_OB_nsr_ready*]['Federation --> OpenStack instances ips']['videoconverter']['public']"
+              store_in: converter_public_ip
         - name: get classes from domains
           type: steps.vnf_action_step
           involved_vnfs:
@@ -166,7 +203,7 @@ MD_NS:
           type: steps.elaboration_step
           elaborations:
             - type: steps.elaboration_step.evaluation
-              code: "min(list(set([domain1_classes]).intersection([domain2_classes])))"
+              code: "min(list(set([^domain1_classes]).intersection([^domain2_classes])))"
               store_in: domains_class
         - name: setup domains bridge
           type: steps.vnf_action_step
@@ -207,9 +244,6 @@ MD_NS:
                 - name: status_initialized
                   type: tosca.nodes.steps.action
 
-
-
-
     - name: on domains initialized
       type: triggers.trigger
       condition:
@@ -232,6 +266,15 @@ MD_NS:
               type: tosca.vartype.string
               value: initialized
             operator: '=='
+          - name: nsr not active (to be initialized)
+            type: tosca.generic_evaluation
+            left_item:
+              type: tosca.vartype.string
+              value: ^STATUS
+            right_item:
+              type: tosca.vartype.string
+              value: active
+            operator: '!='
       steps:
         - name: turn nsr initialized
           type: steps.elaboration_step
@@ -241,7 +284,7 @@ MD_NS:
               params:
                 - name: status
                   value: initialized
-        - name: get source ready
+        - name: get VNFs ip
           type: steps.vnf_action_step
           involved_vnfs:
             - name: videosource
@@ -253,11 +296,30 @@ MD_NS:
                     - name: ifname
                       value: dom1_gre
                   return_value: ip
+            - name: videoconverter
+              type: tosca.nodes.steps.involved_vnf
+              actions:
+                - name: get_ip
+                  type: tosca.nodes.steps.action
+                  params:
+                    - name: ifname
+                      value: dom2_gre
+                  return_value: ip_dst
+        - name: start streaming
+          type: steps.vnf_action_step
+          involved_vnfs:
+            - name: videosource
+              type: tosca.nodes.steps.involved_vnf
+              actions:
                 - name: start_streaming
                   type: tosca.nodes.steps.action
                   params:
                     - name: videofile
                       value: BigBuckBunny_320x180.mp4
+                    - name: access
+                      value: udp
+                    - name: address
+                      value: ^ip_dst
                     - name: port
                       value: 8080
                     - name: mux
@@ -271,8 +333,10 @@ MD_NS:
                 - name: start_transcoding
                   type: tosca.nodes.steps.action
                   params:
+                    - name: source_access
+                      value: udp
                     - name: source_ip
-                      value: ^ip
+                      value: "@"
                     - name: source_port
                       value: 8080
                     - name: mux
@@ -281,6 +345,8 @@ MD_NS:
                       value: h264
                     - name: filter
                       value: sepia
+                    - name: dest_access
+                      value: http
                     - name: dest_port
                       value: 8080
         - name: turn nsr active
@@ -292,20 +358,118 @@ MD_NS:
                 - name: status
                   value: active
 
-  monitors:
-    - name: videosource
-      type: monitor.nodes.nfv.VNF
-      measurements:
-        - name: cpu_load
-          type: monitor.measure
-          interval: 10_sec
+    - name: get datetime
+      type: triggers.trigger
+      condition:
+        - name: on datetime triggered
+          type: tosca.generic_evaluation
+          left_item:
+            type: tosca.vartype.bool
+            value: ^datetime_trigger
+          right_item:
+            type: tosca.vartype.bool
+            value: True
+          operator: '=='
+      steps:
+        - name: reset triggering variable to False
+          type: steps.elaboration_step
+          elaborations:
+            - type: steps.elaboration_step.evaluation
+              code: "False"
+              store_in: datetime_trigger
+        - name: get VNFs datetime
+          type: steps.vnf_action_step
+          involved_vnfs:
+            - name: videosource
+              type: tosca.nodes.steps.involved_vnf
+              actions:
+                - name: get_datetime
+                  type: tosca.nodes.steps.action
+                  return_value: datetime_trigger_source
+            - name: videoconverter
+              type: tosca.nodes.steps.involved_vnf
+              actions:
+                - name: get_datetime
+                  type: tosca.nodes.steps.action
+                  return_value: datetime_trigger_converter
+        - name: concatenate VNFs datetimes in on_demand variable
+          type: steps.elaboration_step
+          elaborations:
+            - type: steps.elaboration_step.evaluation
+              code: "'[^datetime_trigger_source]' + '<br>' + '[^datetime_trigger_converter]'"
+              store_in: datetime
 
-    - name: videoconverter
-      type: monitor.nodes.nfv.VNF
-      measurements:
-        - name: cpu_load
-          type: monitor.measure
-          interval: 25_sec
-        - name: available_memory
-          type: monitor.measure
-          interval: 20_sec
+    - name: Video Source Position
+      type: triggers.trigger
+      condition:
+        - name: on seek triggered
+          type: tosca.generic_evaluation
+          left_item:
+            type: tosca.vartype.bool
+            value: ^od_video_position
+          right_item:
+            type: tosca.vartype.bool
+            value: True
+          operator: '=='
+      steps:
+        - name: reset triggering variable to False
+          type: steps.elaboration_step
+          elaborations:
+            - type: steps.elaboration_step.evaluation
+              code: "False"
+              store_in: od_video_position
+        - name: get VNFs datetime
+          type: steps.vnf_action_step
+          involved_vnfs:
+            - name: videosource
+              type: tosca.nodes.steps.involved_vnf
+              actions:
+                - name: seek
+                  type: tosca.nodes.steps.action
+                  params:
+                    - name: second
+                      value: ^_video_position
+        - name: update on_demand position variable
+          type: steps.elaboration_step
+          elaborations:
+            - type: steps.elaboration_step.evaluation
+              code: "[^_video_position]"
+              store_in: video_position
+
+  On_demand:
+    - name: VNFs datetime
+      variable_name: datetime_trigger
+      description: Get the date and time of both the VNFs
+      params:
+        - name: Datetime
+          variable_name: datetime
+          description: date and time
+          readonly: True
+          type: string
+    - name: Source Public IP
+      variable_name: od_source_public_ip
+      description: Get the source video VNF IP
+      params:
+        - name: IP
+          variable_name: source_public_ip
+          description: VNF IP
+          readonly: True
+          type: string
+    - name: Converter Public IP
+      variable_name: od_converter_public_ip
+      description: Get the converter video VNF IP
+      params:
+        - name: IP
+          variable_name: converter_public_ip
+          description: VNF IP
+          readonly: True
+          type: string
+    - name: Video Playback Position
+      variable_name: od_video_position
+      description: Position of the video playback
+      params:
+        - name: Position
+          variable_name: video_position
+          description: position (in seconds)
+          readonly: False
+          type: integer

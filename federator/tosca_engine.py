@@ -22,6 +22,10 @@ LOG = logging.getLogger(__name__)
 def process_mdns(mdns):
     try:
         sdnss = {}
+
+        if 'vnfds' not in mdns['MD_NS']:
+            return sdnss
+
         for vnf in mdns['MD_NS']['vnfds']:
             location = vnf['location']
             if location not in sdnss:
@@ -49,6 +53,10 @@ def process_mdns(mdns):
         if 'CPs' in mdns['MD_NS'] and mdns['MD_NS']['CPs'] is not None:
             for cp in mdns['MD_NS']['CPs']:
                 vnf_name = cp['virtualbinding']
+
+                if '.' in vnf_name:
+                    vnf_name = vnf_name.split('.')[0]
+
                 location = vnfname_location[vnf_name]
                 cpname_location[cp['name']] = location
                 cpname_cpobject[cp['name']] = cp
@@ -81,6 +89,7 @@ def process_mdns(mdns):
 
         # todo add FGs (decice whether it has to be implemented)
 
+        '''
         #  MONITOR RELATED PARAMETERS
         if 'MD_Mon' in mdns and 'monitors' in mdns['MD_Mon']:
             for monitor in mdns['MD_Mon']['monitors']:
@@ -91,6 +100,7 @@ def process_mdns(mdns):
                 if 'monitors' not in sdnss[location]['SD_Mon']:
                     sdnss[location]['SD_Mon']['monitors'] = list()
                 sdnss[location]['SD_Mon']['monitors'].append(monitor)
+        '''
 
         for location in sdnss:
             prot_vers_keyword = 'tosca_FDs_protocol_version'

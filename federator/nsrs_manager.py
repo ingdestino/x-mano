@@ -92,13 +92,35 @@ class NSRsManager:
 
     def monitor_update(self, measurement_pkt):
         nsr_uuid = measurement_pkt.md_nsr_uuid
+
         if nsr_uuid in self.nsrs:
             nsr = self.nsrs[nsr_uuid]
-            nsr.monitor_update(measurement_pkt)
+            # fixme, removed function
+            # nsr.monitor_update(measurement_pkt)
         else:
             LOG.warning('dropping measurement from nsr '
                         + nsr_uuid
                         + ' since it does not exist')
+
+    def get_on_demand(self, uuid):
+        if uuid not in self.nsrs:
+            return 404
+        return self.nsrs[uuid].get_on_demand()
+
+    def set_on_demand(self, uuid, on_demand_list):
+        if uuid not in self.nsrs:
+            return 404
+        return self.nsrs[uuid].set_on_demand(on_demand_list)
+
+    def get_delegates(self, uuid):
+        if uuid not in self.nsrs:
+            return 404
+        return self.nsrs[uuid].get_delegates()
+
+    def set_delegates(self, uuid, delegate):
+        if uuid not in self.nsrs:
+            return 404
+        return self.nsrs[uuid].set_delegates(delegate)
 
     def get_nsr_owner(self, uuid):
         if uuid not in self.nsrs:

@@ -172,15 +172,17 @@ class ActionPkt(PacketAbstract):
             self.md_nsr_uuid = self._body['md_nsr_uuid']
             self.vnf_name = self._body['vnf_name']
             self.action_obj = self.ActionObj(self._body['action_obj'])
+            self.action_uuid = self._body['action_uuid']
 
     def set_action_obj(self, action):
         self.action_obj = self.ActionObj(action)
 
-    def build(self):
+    def build(self, md_nsr_uuid, vnf_name, action_uuid):
         body = dict()
-        body['md_nsr_uuid'] = self.md_nsr_uuid
-        body['vnf_name'] = self.vnf_name
+        body['md_nsr_uuid'] = md_nsr_uuid
+        body['vnf_name'] = vnf_name
         body['action_obj'] = self.action_obj.get_packet()
+        body['action_uuid'] = action_uuid
         super(ActionPkt, self).pkt_builder('action', body)
 
     def get_packet(self):
@@ -202,16 +204,18 @@ class ActionResponsePkt(PacketAbstract):
         if packet is not None:
             self.action_name = self._body['action_name']
             self.md_nsr_uuid = self._body['md_nsr_uuid']
+            self.action_uuid = self._body['action_uuid']
             if 'return_value' in self._body:
                 self.return_value = self._body['return_value']
 
     def set_return_value(self, param_name, param_value):
         self.return_value = self.ReturnValue(param_name, param_value)
 
-    def build(self, action_name, md_nsr_uuid):
+    def build(self, action_name, md_nsr_uuid, action_uuid):
         body = dict()
         body['action_name'] = action_name
         body['md_nsr_uuid'] = md_nsr_uuid
+        body['action_uuid'] = action_uuid
         if self.return_value is not None:
             body['return_value'] = self.return_value.to_dict()
         super(ActionResponsePkt, self).pkt_builder('OK_action', body)

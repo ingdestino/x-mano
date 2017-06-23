@@ -143,7 +143,7 @@ class RabbitEndpoint(Thread):
 
         for queue, command in to_be_removed_commands:
             self.send_myqueue.remove((queue, command))
-        self.connection.add_timeout(0.1, self.mycallbacktimer)
+        self.connection.add_timeout(0.001, self.mycallbacktimer)
 
         if self.is_endpoint_stopped():
             self.connection.close()

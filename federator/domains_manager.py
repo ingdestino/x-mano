@@ -58,10 +58,11 @@ class DomainsManager:
         assert response.status_code == 200
         data = response.json()
         for queue in data:
-            response = requests.delete(self.management_url
-                                       + 'queues/%2f/'
-                                       + queue['name'])
-            assert response.status_code == 204
+            if queue['name'] != 'debug':
+                response = requests.delete(self.management_url
+                                           + 'queues/%2f/'
+                                           + queue['name'])
+                assert response.status_code == 204
 
         response = requests.get(self.management_url + 'exchanges/%2f')
         assert response.status_code == 200

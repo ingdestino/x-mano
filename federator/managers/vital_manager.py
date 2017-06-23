@@ -66,10 +66,12 @@ class DomainManager(ManagerAbstract):
                 if vnf_id is None or vnf['federation_id'] == vnf_id]
 
     def process_message(self, queue, message):
-        perf_log('communication|' + self._username + '|' + message['perf_id'])
-        perf_log('processing|'
-                 + message['header'].replace(' ', '')
-                 + '|newmessage')
+
+        if PERF_ENABLED:
+            perf_log('communication|' + self._username + '|' + message['perf_id'])
+            perf_log('processing|'
+                     + message['header'].replace(' ', '')
+                     + '|newmessage')
         try:
             if queue == self._from_domain_queue:
                 assert type(message) != str
@@ -81,8 +83,17 @@ class DomainManager(ManagerAbstract):
                 if message['header'] == 'vnf':
                     vnf_model_pkt = VNFModelPkt(message)
                     vnf_model = vnf_model_pkt.vnf
-                    vnf_model['federation_id'] = str(uuid4())
-                    self._vnfs.append(vnf_model)
+
+                    if 'remove' in vnf_model:
+                        vnf_match = [vnf for vnf in self._vnfs
+                                     if vnf['name'] == vnf_model['name']]
+                        assert len(vnf_match) == 1
+                        self._vnfs.remove(vnf_match[0])
+                        LOG.info('vnf manifest %s removed' % vnf_model['name'])
+                    else:
+                        vnf_model['federation_id'] = str(uuid4())
+                        self._vnfs.append(vnf_model)
+                        LOG.info('vnf manifest %s added' % vnf_model['name'])
 
                 if message['header'] == 'nsr_status':
                     nsr_status_pkt = NSRStatusPkt(message)

@@ -21,8 +21,9 @@ from pymongo import MongoClient
 from threading import Thread
 import json
 import logging
+import datetime
 
-from federator.parsers import json_pymongo, obj_pymongo, yaml_pymongo, json_python_dict
+from federator.parsers import json_pymongo, obj_pymongo, yaml_pymongo
 from federator.common import User
 from federator.common import UserPermissions
 from federator.parsers import is_uuid
@@ -55,13 +56,15 @@ def check_request(headers, user_permissions):
         return 0
 
 
-
 class LoginRest(tornado.web.RequestHandler):
     class TokensMapEncoder(json.JSONEncoder):
         def default(self, obj):
             if type(obj) == User:
                 user_json = obj.to_jsondict()
-                user_json['last_access'] = user_json['last_access'].strftime('%Y-%m-%d %H:%M:%S.%f') + ' +0000'
+                last_access = user_json['last_access']
+                pattern = '%Y-%m-%d %H:%M:%S.%f'
+                last_access = last_access.strftime(pattern) + ' +0000'
+                user_json['last_access'] = last_access
                 return user_json
 
     def post(self, *args, **kwargs):
@@ -78,12 +81,15 @@ class LoginRest(tornado.web.RequestHandler):
 
             if result.count() > 0:
                 assert result.count() == 1
-                client.FNRM.users.update_one({'username': request_data['username']},
-                                             {'$currentDate': {"last_access": True}})
+                username = request_data['username']
+                date = {"last_access": True}
+                client.FNRM.users.update_one({'username': username},
+                                             {'$currentDate': date})
                 result = client.FNRM.users.find(request_data)
 
                 user = User(result[0])
-                user.password = 'nopassword' # for security, do not save the login password
+                # for security reasons, do not save the login password
+                user.password = 'nopassword'
 
                 logged_users.logout(user.username)
                 token = logged_users.login(user)
@@ -100,7 +106,7 @@ class LoginRest(tornado.web.RequestHandler):
         try:
             status_code = check_request(self.request.headers,
                                         [UserPermissions.administrator,
-                                        UserPermissions.user])
+                                         UserPermissions.user])
             if status_code != 0:
                 self.set_status(status_code)
                 return
@@ -147,17 +153,20 @@ class LoginRest(tornado.web.RequestHandler):
             self.set_status(500)
             raise
 
+
 class UsersRest(tornado.web.RequestHandler):
     def post(self, *args, **kwargs):
         try:
-            status_code = check_request(self.request.headers, UserPermissions.administrator)
+            status_code = check_request(self.request.headers,
+                                        UserPermissions.administrator)
             if status_code != 0:
                 self.set_status(status_code)
                 return
 
             request_data = json.loads(self.request.body.decode('utf-8'))
             LOG.debug(request_data)
-            if request_data.keys() != {'username', 'password', 'user_permissions'}:
+            valid = {'username', 'password', 'user_permissions'}
+            if request_data.keys() != valid:
                 self.set_status(400)
                 return
 
@@ -187,7 +196,7 @@ class UsersRest(tornado.web.RequestHandler):
             logged_users.logout(slug)
 
             client = MongoClient(mongodb_ip, mongodb_port)
-            result = client.FNRM.users.delete_one({'username': slug})#request_data)
+            result = client.FNRM.users.delete_one({'username': slug})
             assert result.deleted_count <= 1
             if result.deleted_count == 1:
                 self.set_status(204)
@@ -212,7 +221,8 @@ class UsersRest(tornado.web.RequestHandler):
             else:
                 search_parameter = {'username': slug}
 
-            result = client.FNRM.users.find(search_parameter, {'_id': 0, 'password': 0})
+            result = client.FNRM.users.find(search_parameter,
+                                            {'_id': 0, 'password': 0})
 
             toreturn = json_pymongo(result)
             self.write(toreturn)
@@ -224,8 +234,9 @@ class UsersRest(tornado.web.RequestHandler):
 class NSDRest(tornado.web.RequestHandler):
     def post(self, *args, **kwargs):
         try:
-            status_code = check_request(self.request.headers, [UserPermissions.administrator,
-                                                               UserPermissions.user])
+            status_code = check_request(self.request.headers,
+                                        [UserPermissions.administrator,
+                                         UserPermissions.user])
             if status_code != 0:
                 self.set_status(status_code)
                 return
@@ -248,7 +259,6 @@ class NSDRest(tornado.web.RequestHandler):
             client = MongoClient(mongodb_ip, mongodb_port)
             try:
                 rich_nsd = nsd.to_richdict()
-                #rich_nsd.update({'uuid': uuid, 'owner': user.username})
                 rich_nsd.update({'owner': user.username})
                 result = client.FNRM.nsds.insert(rich_nsd)
             except errors.DuplicateKeyError as e:
@@ -330,6 +340,7 @@ class NSDRest(tornado.web.RequestHandler):
             self.set_status(500)
             raise
 
+
 class ResourcesRest(tornado.web.RequestHandler):
     def get(self, slug=None):
         try:
@@ -349,6 +360,7 @@ class ResourcesRest(tornado.web.RequestHandler):
             self.set_status(500)
             raise
 
+
 class NSRRest(tornado.web.RequestHandler):
     def _get_monitors_measurs(self, client, user, uuid):
         query = list()
@@ -357,13 +369,17 @@ class NSRRest(tornado.web.RequestHandler):
             match.update({'owner': user.username})
         query.append({'$match': match})
 
-        query.append({'$lookup': {'from': 'measurements', 'localField': 'uuid',
-                                  'foreignField': 'md_nsr_uuid', 'as': 'monitors'}})
+        query.append({'$lookup': {'from': 'measurements',
+                                  'localField': 'uuid',
+                                  'foreignField': 'md_nsr_uuid',
+                                  'as': 'monitors'}})
         query.append({'$unwind': '$monitors'})
-        query.append({'$group': {'_id': {'monitor_name': '$monitors.monitor_name',
-                                         'measur_name': '$monitors.measur_name'}}})
-        query.append({'$group': {'_id': '$_id.monitor_name',
-                                 'measurs_name': {'$addToSet': '$_id.measur_name'}}})
+        query.append({'$group':
+                     {'_id': {'monitor_name': '$monitors.monitor_name',
+                              'measur_name': '$monitors.measur_name'}}})
+        query.append({'$group':
+                     {'_id': '$_id.monitor_name',
+                      'measurs_name': {'$addToSet': '$_id.measur_name'}}})
         result = client.FNRM.nsrs.aggregate(query)
         data_json = obj_pymongo(result)
         return data_json
@@ -379,24 +395,27 @@ class NSRRest(tornado.web.RequestHandler):
                                          'measur_name': measur_name}})
                 query.append({'$sort': {'timestamp': -1}})
                 query.append({'$limit': int(measurs_number)})
-                query.append({'$project': {'_id': 0,
-                                           'timestamp': 1,
-                                           'value': {'$substr': ['$value', 0, -1]},
-                                           'value_type': 1}})
+                projection = {'_id': 0,
+                              'timestamp': 1,
+                              'value': {'$substr': ['$value', 0, -1]},
+                              'value_type': 1}
+                query.append({'$project': projection})
                 result = client.FNRM.measurements.aggregate(query)
                 data_json = obj_pymongo(result)
 
-                target = [item for item in toreturn if item['monitor']['monitor_name'] == monitor_name]
+                target = [item for item in toreturn
+                          if item['monitor']['monitor_name'] == monitor_name]
                 if len(target) == 0:
-                    target = {'monitor': {'monitor_name': monitor_name, 'measur_name': list()}}
+                    target = {'monitor': {'monitor_name': monitor_name,
+                                          'measur_name': list()}}
                     toreturn.append(target)
                 else:
                     target = target[0]
 
-                target['monitor']['measur_name'].append({'measur_name': measur_name, 'samples': data_json})
+                data = {'measur_name': measur_name, 'samples': data_json}
+                target['monitor']['measur_name'].append(data)
 
         return {'measurements': toreturn}
-
 
     def _process_stats(self, client, user, uuid, n_measurements):
         schema = self._get_monitors_measurs(client, user, uuid)
@@ -407,6 +426,7 @@ class NSRRest(tornado.web.RequestHandler):
             status_code = check_request(self.request.headers,
                                         [UserPermissions.administrator,
                                          UserPermissions.user])
+
             if status_code != 0:
                 self.set_status(status_code)
                 return
@@ -414,47 +434,96 @@ class NSRRest(tornado.web.RequestHandler):
             client = MongoClient(mongodb_ip, mongodb_port)
             token = self.request.headers['Auth']
             user = logged_users.get_user_from_token(token)
-            toreturn = None
+
+            delegates = False
+            if self.request.uri.split('/')[-1] == 'delegates':
+                delegates = True
+
+            on_demand = False
+            if self.request.uri.split('/')[-1] == 'on_demand':
+                on_demand = True
+
+            nsr_delegates = nsrs_manager.get_delegates(slug)
+            match = [deleg for deleg in nsr_delegates
+                     if deleg.user == user.username]
+            assert len(match) <= 1
+            delegated_user = (len(match) == 1)
 
             if slug == 'stats':
                 uuid = self.get_argument('nsr_uuid')
                 measurs_number = self.get_argument('measurements')
-                measurements = self._process_stats(client, user, uuid, measurs_number)
+                measurements = self._process_stats(client,
+                                                   user,
+                                                   uuid,
+                                                   measurs_number)
                 self.write(json.dumps(measurements))
                 return
             else:
                 extended_query = False
-                mask = {'uuid': 1, 'owner': 1, 'creation_datetime': 1, 'status': 1}
+                mask = {'uuid': 1,
+                        'owner': 1,
+                        'creation_datetime': 1,
+                        'status': 1}
 
                 if slug is None:
                     search_parameter = {}
+
                 elif is_uuid(slug):
+
                     search_parameter = {'uuid': slug}
-                    extended_query = True
-                    mask = {}
+
+                    if on_demand is False and delegates is False:
+                        extended_query = True
+                        mask = {}
+
                 else:
                     search_parameter = {'owner': slug}
 
                 if user.user_permissions != UserPermissions.administrator:
-                    search_parameter.update({'owner': user.username})
+                    if not delegated_user:
+                        search_parameter.update({'owner': user.username})
 
                 if extended_query is False:
                     mask.update({'_id': 0})
                     result = client.FNRM.nsrs.find(search_parameter, mask)
-                    nsr_data = json_pymongo(result)
+
+                    if delegates is True:
+                        if result.count() == 0:
+                            self.set_status(404)
+                            return
+                        else:
+                            nsr_data_dict = nsrs_manager.get_delegates(slug)
+
+                    elif on_demand is True:
+                        if not delegated_user and result.count() == 0:
+                            self.set_status(403)
+                            return
+                        else:
+                            nsr_data_dict = nsrs_manager.get_on_demand(slug)
+                    else:
+                        nsr_data_dict = result
+
+                    if delegated_user:
+                        nsr_data_dict['owner'] = '-'
+                        nsr_data_dict['creation_datetime'] = datetime.min
+
+                    nsr_data = json_pymongo(nsr_data_dict)
+
                 else:
-                    result = client.FNRM.nsrs.find({'uuid': slug}, {'_id': 0})
+                    result = client.FNRM.nsrs.find(search_parameter, {'_id': 0})
                     nsr_data = obj_pymongo(result)
                     if len(nsr_data) == 0:
                         self.set_status(404)
                         return
                     else:
                         assert len(nsr_data) == 1
-                        nsr_data[0]['other_params'] = str(nsr_data[0]['other_params'])
+                        other_params_str = str(nsr_data[0]['other_params'])
+                        nsr_data[0]['other_params'] = other_params_str
                         nsr_data[0]['nsd'] = yaml_pymongo(nsr_data[0]['nsd'])
                         monitors = self._process_stats(client, user, slug, '1')
                         nsr_data[0]['monitors'] = monitors
                         nsr_data = json.dumps(nsr_data)
+
                 self.write(nsr_data)
 
         except Exception as e:
@@ -478,14 +547,16 @@ class NSRRest(tornado.web.RequestHandler):
             user = logged_users.get_user_from_token(token)
             nsr_owner = nsrs_manager.get_nsr_owner(slug)
 
-            if user.user_permissions == UserPermissions.administrator or user.username == nsr_owner:
+            if user.user_permissions == UserPermissions.administrator \
+                    or user.username == nsr_owner:
                 if nsrs_manager.get_nsr_owner(slug) is not None:
                     termination_status = nsrs_manager.terminate_nsr(slug)
                     assert termination_status is True
                     assert nsrs_manager.get_nsr_owner(slug) is None
 
                 client = MongoClient(mongodb_ip, mongodb_port)
-                result = client.FNRM.nsrs.delete_one({'uuid': slug}) # fixme delete also measurements
+                # fixme delete also measurements
+                result = client.FNRM.nsrs.delete_one({'uuid': slug})
                 assert result.deleted_count <= 1
                 if result.deleted_count == 1:
                     self.set_status(204)
@@ -535,10 +606,9 @@ class NSRRest(tornado.web.RequestHandler):
             self.set_status(500)
             raise
 
-'''
-class MonDRest(tornado.web.RequestHandler):
-    def get(self, slug=None):
+    def post(self, slug):
         try:
+
             status_code = check_request(self.request.headers,
                                         [UserPermissions.administrator,
                                          UserPermissions.user])
@@ -546,20 +616,47 @@ class MonDRest(tornado.web.RequestHandler):
                 self.set_status(status_code)
                 return
 
-            # todo filter by owner, owner can also be in the slug
+            on_demand = False
+            delegate = False
+            request_type = self.request.uri.split('/')[-1]
+            if request_type == 'on_demand':
+                on_demand = True
+            if request_type == 'delegates':
+                delegate = True
 
+            if not ((on_demand or delegate) and is_uuid(slug)):
+                self.set_status(400)
+                return
+
+            token = self.request.headers['Auth']
+            user = logged_users.get_user_from_token(token)
             client = MongoClient(mongodb_ip, mongodb_port)
-            if slug is None:
-                result = client.FNRM.mond.find()
-            else:
-                result = client.FNRM.mond.find({'uuid': slug})
 
-            self.write(json_pymongo(result))
+            search_parameter = {'uuid': slug}
+
+            if user.user_permissions != UserPermissions.administrator:
+                search_parameter.update({'owner': user.username})
+
+            result = client.FNRM.nsrs.find(search_parameter)
+
+            if result.count() == 0:
+                self.set_status(404)
+                return
+            assert result.count() == 1
+
+            request_data = json.loads(self.request.body.decode('utf-8'))
+
+            if on_demand:
+                nsrs_manager.set_on_demand(slug, request_data)
+            elif delegate:
+                nsrs_manager.set_delegates(slug, request_data)
+
+            self.set_status(204)
 
         except Exception as e:
             self.set_status(500)
             raise
-'''
+
 
 class Rest(Thread):
     def __init__(self, rest_data, mongodb_data, logins):
@@ -582,11 +679,14 @@ class Rest(Thread):
             (r"/rest/resources/([^/]+)", ResourcesRest),
             (r"/rest/nsrs", NSRRest),
             (r"/rest/nsrs/", NSRRest),
-            (r"/rest/nsrs/([^/]+)", NSRRest)])
-
+            (r"/rest/nsrs/([^/]+)", NSRRest),
+            (r"/rest/nsrs/([^/]+)/on_demand", NSRRest),
+            (r"/rest/nsrs/([^/]+)/delegates", NSRRest),
+            (r"/rest/nsrs/([^/]+)/delegates/([^/]+)", NSRRest)])
 
     def run(self):
-        LOG.debug('mongodb is on ip ' + self.mongodb_data['ipaddr'] + ' port ' + self.mongodb_data['port'])
+        LOG.debug('mongodb is on ip ' + self.mongodb_data['ipaddr']
+                  + ' port ' + self.mongodb_data['port'])
         global mongodb_ip
         global mongodb_port
         global logged_users
@@ -596,11 +696,12 @@ class Rest(Thread):
         mongodb_port = int(self.mongodb_data['port'])
         nsrs_manager = NSRsManager(mongodb_ip, mongodb_port, logged_users)
 
-        LOG.debug('listening on ' + self.rest_data['ipaddr'] + ' port ' + str(self.rest_data['port']))
-        self.application.listen(self.rest_data['port'], self.rest_data['ipaddr'])
+        LOG.debug('listening on ' + self.rest_data['ipaddr']
+                  + ' port ' + str(self.rest_data['port']))
+        self.application.listen(self.rest_data['port'],
+                                self.rest_data['ipaddr'])
         self.ioloop = tornado.ioloop.IOLoop()
         self.ioloop.current().start()
-
 
     def join(self, timeout=None):
         self.ioloop.current().stop()
